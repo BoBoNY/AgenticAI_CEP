@@ -1,19 +1,25 @@
 # Transit Terminal Departures Board - Routes Configuration
 #
 # UTC_OFFSET: your local UTC offset in hours (e.g. -4 for EDT, -5 for EST)
-# Change this to match your timezone.
 UTC_OFFSET -4
 #
-# Route lines format: ROUTE_NUMBER  STOP_NAME  FREQUENCY_MINS  OFFSET_SECS
-# FREQUENCY_MINS : how often this route departs (headway)
-# OFFSET_SECS    : stagger offset so routes don't all depart at once
-501  Queen             10   0
-504  King               8  90
-510  Spadina           12  45
-29   Dufferin          15 180
-65   Parliament         7  30
-506  Carlton           20 120
-54   Lawrence-East     11 200
-39   Finch-East         9  60
-36   Finch-West        13 270
-194  Scarborough-Exp    6  15
+# Route lines: ROUTE_NUMBER  STOP_NAME  FREQUENCY_MINS  OFFSET_SECS  DIRECTION
+#   FREQUENCY_MINS : headway (how often the route departs)
+#   OFFSET_SECS    : stagger so routes don't all share the same schedule
+#   DIRECTION      : E = Eastbound,  W = Westbound
+501  Queen-East        10    0   E
+501  Queen-West        10  300   W
+504  King-East          8   90   E
+504  King-West          8  390   W
+510  Spadina-South     12   45   E
+510  Spadina-North     12  345   W
+29   Dufferin-South    15  180   E
+29   Dufferin-North    15  480   W
+65   Parliament-East    7   30   E
+65   Parliament-West    7  240   W
+506  Carlton-East      20  120   E
+506  Carlton-West      20  420   W
+54   Lawrence-East     11  200   E
+39   Finch-East         9   60   E
+36   Finch-West        13  270   W
+194  Scarborough-Exp    6   15   E
