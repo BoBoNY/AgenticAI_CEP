@@ -1,3 +1,6 @@
+# C build artifacts
+departures
+
 # Node.js
 node_modules/
 npm-debug.log*

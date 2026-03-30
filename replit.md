@@ -1,31 +1,54 @@
-# AgenticAI CEP
+# AgenticAI CEP — Transit Terminal Departures Board
 
 ## Project Overview
-Agentic AI Complex Event Processing (CEP) platform. This project was imported from GitHub as an empty repository stub and set up in the Replit environment.
+A C-language terminal application that reads transit route data from a text file and displays a real-time departures board with live countdowns, similar to what you'd see at a transit terminal.
 
-## Tech Stack
-- **Runtime**: Node.js 20
-- **Framework**: Express.js
-- **Frontend**: Static HTML/CSS served from `/public`
-- **Port**: 5000
+## Files
 
-## Project Structure
-```
-├── server.js        # Express web server (serves static files on port 5000)
-├── public/
-│   └── index.html   # Landing page
-├── package.json     # Node.js dependencies
-└── replit.md        # This file
-```
+| File | Purpose |
+|---|---|
+| `departures.c` | Main C source — departures board logic + rendering |
+| `routes.txt` | Route data file (route number, stop name, frequency, offset) |
+| `Makefile` | Build rules for gcc |
+| `server.js` | Minimal HTTP landing page (Replit preview) |
+| `public/index.html` | Landing page explaining how to run the C program |
 
-## Running the App
-The app runs via the "Start application" workflow:
+## Building & Running
+
 ```bash
-node server.js
-```
-Starts an Express server on `0.0.0.0:5000`.
+# Compile (Linux / Seneca Matrix)
+gcc -Wall -std=c99 -o departures departures.c
 
-## Development Notes
-- The server listens on `0.0.0.0` to support Replit's proxied preview iframe.
-- Static assets are served from the `public/` directory.
-- Add your application logic to `server.js` and frontend code to `public/`.
+# Or use make
+make
+
+# Run with default routes file
+./departures
+
+# Run with a custom routes file
+./departures my_routes.txt
+```
+
+## Routes File Format
+
+```
+# ROUTE_NUMBER  STOP_NAME  FREQUENCY_MINS  OFFSET_SECS
+501  Queen   10   0
+504  King     8  90
+```
+
+- `FREQUENCY_MINS` — how often the route departs (headway)
+- `OFFSET_SECS` — stagger offset so routes don't all show the same time
+
+## Features
+- Live countdown: "Arriving in 4 min", "Due in 52 sec", "NOW DEPARTING"
+- Colour-coded rows: green (< 5 min), yellow (< 1 min), red (departing now)
+- Sorts all upcoming departures across all routes by next arrival time
+- 60-minute lookahead window, refreshes every second
+- Graceful Ctrl+C exit restores the terminal cursor
+
+## Compatibility
+- Standard C99, POSIX (`unistd.h`, `signal.h`)
+- Tested with GCC 14 on Linux (NixOS)
+- Compatible with Seneca Matrix (gcc)
+- No external dependencies beyond the C standard library
