@@ -42,20 +42,26 @@
 #define CURSOR_SHOW     "\033[?25h"
 #define BOLD            "\033[1m"
 #define RESET           "\033[0m"
-#define FG_WHITE        "\033[97m"
-#define FG_YELLOW       "\033[93m"
-#define FG_GREEN        "\033[92m"
-#define FG_CYAN         "\033[96m"
-#define FG_MAGENTA      "\033[95m"
-#define FG_RED          "\033[91m"
-#define FG_GRAY         "\033[90m"
-#define BG_DARK         "\033[48;5;234m"
-#define BG_HEADER       "\033[48;5;19m"
-#define BG_SUBHDR       "\033[48;5;17m"
-#define BG_ARRIVING     "\033[48;5;22m"
-#define BG_ROW_ALT      "\033[48;5;235m"
-#define BG_DIR_EAST     "\033[48;5;24m"   /* teal for Eastbound active */
-#define BG_DIR_WEST     "\033[48;5;54m"   /* purple for Westbound active */
+
+/*
+ * TTC Brand Palette
+ *   TTC Red  : #DA291C  — closest 256-colour cell: 160 (#d70000)
+ *   Black    : #000000  — cell 16
+ *   White    : #FFFFFF  — standard bright white
+ *   Amber    : #FFB300  — cell 214 (#ffaf00)  used on TTC info screens
+ */
+#define TTC_RED_BG      "\033[48;5;160m"   /* TTC Red background            */
+#define TTC_RED_FG      "\033[38;5;160m"   /* TTC Red foreground            */
+#define TTC_DKRED_BG    "\033[48;5;88m"    /* dark red — column-header band */
+#define TTC_BLACK_BG    "\033[48;5;16m"    /* true black — even rows        */
+#define TTC_DKGRAY_BG   "\033[48;5;233m"   /* near-black — odd rows         */
+#define TTC_DEPART_BG   "\033[48;5;52m"    /* deep red — departing now row  */
+#define TTC_AMBER_FG    "\033[38;5;214m"   /* amber — normal countdown      */
+#define TTC_WHITE_FG    "\033[97m"          /* white — destination text      */
+#define TTC_LGRAY_FG    "\033[37m"          /* light gray — departs-at time  */
+#define TTC_DGRAY_FG    "\033[90m"          /* dark gray — inactive tabs     */
+#define TTC_BRED_FG     "\033[91m"          /* bright red — NOW DEPARTING    */
+#define TTC_BWHITE_FG   "\033[97m"          /* bright white — arriving soon  */
 
 /* ── Data structures ────────────────────────────────────────── */
 typedef struct {
@@ -216,138 +222,159 @@ static int cmp_departure(const void *a, const void *b)
     return da->route_num - db->route_num;
 }
 
-/* ── Countdown label ─────────────────────────────────────────── */
-static void print_countdown(long secs)
+/* ── Countdown label (TTC style) ─────────────────────────────── */
+/*
+ * "NOW DEPARTING"  — bright-red bold on deep-red bg  (handled by draw_board)
+ * < 60 s           — bright white bold  "  0:42"
+ * < 5 min          — bright white bold  "  3:10"
+ * >= 5 min         — amber              "  8:22"
+ *
+ * All values are printed as  MM:SS  to match real TTC info screens.
+ */
+static void print_countdown(long secs, const char *row_bg)
 {
     if (secs <= 0) {
-        printf("%s%s  %-18s%s", FG_RED, BOLD, "NOW DEPARTING", RESET);
-    } else if (secs < 60) {
-        printf("%s%s  Due in %2ld sec%-5s%s",
-               FG_YELLOW, BOLD, secs, "", RESET);
-    } else {
-        long mins = secs / 60;
-        long rem  = secs % 60;
-        char buf[48];
-        if (rem == 0)
-            snprintf(buf, sizeof(buf), "  Arriving in %2ld min", mins);
-        else
-            snprintf(buf, sizeof(buf), "  Arriving in %2ld min %02lds", mins, rem);
-        if (secs < 300)
-            printf("%s%s%-24s%s", FG_GREEN, BOLD, buf, RESET);
-        else
-            printf("%s%-24s%s", FG_CYAN, buf, RESET);
+        /* handled per-row in draw_board; nothing extra needed */
+        return;
     }
+    int  mins = (int)(secs / 60);
+    int  rem  = (int)(secs % 60);
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%2d:%02d", mins, rem);
+
+    if (secs < 300)
+        printf("%s%s  %s%-8s%s", row_bg, BOLD, TTC_BWHITE_FG, buf, RESET);
+    else
+        printf("%s  %s%-8s%s", row_bg, TTC_AMBER_FG, buf, RESET);
 }
 
-/* ── Direction tab bar ──────────────────────────────────────── */
+/* ── Direction tab bar (TTC style) ──────────────────────────── */
 /*
- * Prints a two-tab strip showing the active and inactive directions.
- * Active tab uses a distinct background; inactive is dimmed.
+ * Active tab  : TTC Red background, white bold text, arrow indicator.
+ * Inactive tab: black background, dark-gray text.
  */
 static void print_direction_bar(void)
 {
-    /* East tab */
-    if (g_direction == DIR_EAST)
-        printf("%s%s%s  [E] >> EASTBOUND  %s", BG_DIR_EAST, BOLD, FG_WHITE, RESET);
-    else
-        printf("%s%s  [E]    Eastbound  %s", BG_DARK, FG_GRAY, RESET);
-
-    printf(" ");
-
-    /* West tab */
-    if (g_direction == DIR_WEST)
-        printf("%s%s%s  [W] << WESTBOUND  %s", BG_DIR_WEST, BOLD, FG_WHITE, RESET);
-    else
-        printf("%s%s  [W]    Westbound  %s", BG_DARK, FG_GRAY, RESET);
+    if (g_direction == DIR_EAST) {
+        printf("%s%s%s >> EASTBOUND %s", TTC_RED_BG, BOLD, TTC_WHITE_FG, RESET);
+        printf(" ");
+        printf("%s%s    Westbound %s", TTC_BLACK_BG, TTC_DGRAY_FG, RESET);
+    } else {
+        printf("%s%s    Eastbound %s", TTC_BLACK_BG, TTC_DGRAY_FG, RESET);
+        printf(" ");
+        printf("%s%s%s << WESTBOUND %s", TTC_RED_BG, BOLD, TTC_WHITE_FG, RESET);
+    }
 }
 
-/* ── Board renderer ──────────────────────────────────────────── */
+/* ── Board renderer (TTC style) ─────────────────────────────── */
 static void draw_board(const Departure *deps, int ndeps, long now, int nroutes)
 {
     struct tm tbuf;
 
     printf(CLEAR_SCREEN);
 
-    /* ── title bar ── */
-    printf("%s%s%s", BG_HEADER, BOLD, FG_WHITE);
-    printf("  %-26s", "TRANSIT TERMINAL DEPARTURES");
+    /* ════════════════════════════════════════════════════════════
+     * Row 1 — TTC Red header bar
+     *   [ TTC ]  REAL-TIME DEPARTURE BOARD      13:44:18
+     * ════════════════════════════════════════════════════════════ */
+    printf("%s%s", TTC_RED_BG, BOLD);
+    printf("  %sTTC%s ", TTC_BLACK_BG, TTC_RED_BG);   /* TTC badge: black-on-red inset */
+    printf("%s  REAL-TIME DEPARTURE BOARD", TTC_WHITE_FG);
 
-    /* direction tab strip */
-    printf("  ");
-    print_direction_bar();
-
-    /* live clock */
     display_tm((time_t)now, &tbuf);
-    printf("  %s%02d:%02d:%02d%s\n",
-           FG_YELLOW, tbuf.tm_hour, tbuf.tm_min, tbuf.tm_sec, RESET);
+    printf("%25s%02d:%02d:%02d  %s\n", "",
+           tbuf.tm_hour, tbuf.tm_min, tbuf.tm_sec, RESET);
 
-    /* ── column headers ── */
-    printf("%s%s%s", BG_SUBHDR, BOLD, FG_WHITE);
-    printf("  %-6s  %-18s  %-26s  %s\n",
-           "ROUTE", "DESTINATION", "STATUS", "DEPARTS AT");
+    /* ════════════════════════════════════════════════════════════
+     * Row 2 — Direction tab strip
+     * ════════════════════════════════════════════════════════════ */
+    printf("%s  ", TTC_BLACK_BG);
+    print_direction_bar();
+    printf("%s\n", RESET);
+
+    /* ════════════════════════════════════════════════════════════
+     * Row 3 — Column headers on dark-red band
+     * ════════════════════════════════════════════════════════════ */
+    printf("%s%s%s", TTC_DKRED_BG, BOLD, TTC_WHITE_FG);
+    printf("  %-6s  %-20s  %-10s  %-10s  %s\n",
+           "ROUTE", "DESTINATION", "ARRIVES", "DEPARTS", "");
     printf("%s", RESET);
 
-    /* ── separator ── */
-    printf("%s", FG_GRAY);
+    /* ════════════════════════════════════════════════════════════
+     * Separator — thin TTC red line
+     * ════════════════════════════════════════════════════════════ */
+    printf("%s", TTC_RED_FG);
     for (int i = 0; i < 72; i++) putchar('-');
     printf("%s\n", RESET);
 
-    /* ── rows ── */
+    /* ════════════════════════════════════════════════════════════
+     * Departure rows
+     * ════════════════════════════════════════════════════════════ */
     int shown = 0;
     for (int i = 0; i < ndeps && shown < SHOW_ROWS; i++) {
         long secs_away = deps[i].depart_at - now;
         if (secs_away < -30) continue;
 
-        const char *row_bg = (shown % 2 == 0) ? BG_DARK : BG_ROW_ALT;
-        if (secs_away >= 0 && secs_away < 120)
-            row_bg = BG_ARRIVING;
+        /* choose row background */
+        const char *row_bg;
+        if (secs_away <= 0)
+            row_bg = TTC_DEPART_BG;           /* departing — deep red */
+        else
+            row_bg = (shown % 2 == 0) ? TTC_BLACK_BG : TTC_DKGRAY_BG;
 
         printf("%s", row_bg);
 
-        /* route number */
-        char route_buf[16];
-        snprintf(route_buf, sizeof(route_buf), "%d", deps[i].route_num);
-        printf("  %s%s%-6s%s  ", BOLD, FG_YELLOW, route_buf, RESET);
+        /* route number badge:  [501]  in TTC Red on current row bg */
+        char badge[12];
+        snprintf(badge, sizeof(badge), "[%d]", deps[i].route_num);
+        printf("  %s%s%-6s%s", BOLD, TTC_RED_FG, badge, RESET);
+        printf("%s  ", row_bg);
+
+        /* destination */
+        printf("%s%-20s%s  ", TTC_WHITE_FG, deps[i].stop_name, RESET);
         printf("%s", row_bg);
 
-        /* stop name */
-        printf("%s%-18s%s  ", FG_WHITE, deps[i].stop_name, RESET);
+        /* countdown / status */
+        if (secs_away <= 0) {
+            printf("%s%s  %-10s%s  ", TTC_BRED_FG, BOLD, "DEPARTING", RESET);
+        } else {
+            print_countdown(secs_away, row_bg);
+            printf("  ");
+        }
         printf("%s", row_bg);
-
-        /* countdown */
-        print_countdown(secs_away);
 
         /* scheduled departure time */
         display_tm((time_t)deps[i].depart_at, &tbuf);
-        printf("  %s%02d:%02d%s", FG_GRAY, tbuf.tm_hour, tbuf.tm_min, RESET);
+        printf("%s  %02d:%02d   %s",
+               TTC_LGRAY_FG, tbuf.tm_hour, tbuf.tm_min, RESET);
 
         printf("%s\n", RESET);
         shown++;
     }
 
-    /* empty-row filler to keep a fixed board height */
+    /* empty-row filler to hold fixed board height */
     for (int i = shown; i < SHOW_ROWS; i++) {
-        printf("%s  %-6s  %-18s  %-26s\n",
-               (i % 2 == 0) ? BG_DARK : BG_ROW_ALT,
-               "---", "---", "---");
-        printf("%s", RESET);
+        const char *row_bg = (i % 2 == 0) ? TTC_BLACK_BG : TTC_DKGRAY_BG;
+        printf("%s  %-6s  %-20s  %-10s  %-10s%s\n",
+               row_bg, "---", "---", "---", "", RESET);
     }
 
-    /* ── footer ── */
-    printf("%s", FG_GRAY);
+    /* ════════════════════════════════════════════════════════════
+     * Footer — TTC Red separator + key hints
+     * ════════════════════════════════════════════════════════════ */
+    printf("%s", TTC_RED_FG);
     for (int i = 0; i < 72; i++) putchar('-');
     printf("%s\n", RESET);
 
-    /* UTC offset label */
     int  off_h = (int)(g_tz_offset / 3600);
     int  off_m = (int)((g_tz_offset % 3600) / 60);
     if (off_m < 0) off_m = -off_m;
     char tz_label[32];
     snprintf(tz_label, sizeof(tz_label), "UTC%+d:%02d", off_h, off_m);
 
-    printf("%s  %d routes  |  %s  |  "
-           "[E] Eastbound  [W] Westbound  [Tab] Toggle  |  [Q] Quit%s\n",
-           FG_GRAY, nroutes, tz_label, RESET);
+    printf("%s  Toronto Transit Commission  |  %d routes  |  %s  |  "
+           "[E] East  [W] West  [Tab] Toggle  [Q] Quit%s\n",
+           TTC_DGRAY_FG, nroutes, tz_label, RESET);
 
     fflush(stdout);
 }
