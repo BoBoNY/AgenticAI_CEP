@@ -23,6 +23,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <signal.h>
+#include <limits.h>
 
 /* ── Constants ──────────────────────────────────────────────── */
 #define MAX_ROUTES      100
@@ -106,7 +107,15 @@ static void handle_sigint(int sig)
 }
 
 /* ── File parsing ───────────────────────────────────────────── */
-static int load_routes(const char *filename, Route *routes, int max)
+/*
+ * Load routes from file.  Also scans for a UTC_OFFSET directive and
+ * writes the offset in seconds to *file_tz_offset when found
+ * (leaves it unchanged when the directive is absent).
+ *
+ * Returns number of routes loaded, or -1 on error.
+ */
+static int load_routes(const char *filename, Route *routes, int max,
+                       long *file_tz_offset)
 {
     FILE *fp;
     char  line[256];
@@ -124,14 +133,25 @@ static int load_routes(const char *filename, Route *routes, int max)
         /* skip leading whitespace */
         while (*p == ' ' || *p == '\t') p++;
 
-        /* skip blank lines and comments */
-        if (*p == '\0' || *p == '\n' || *p == '#') continue;
+        /* skip blank lines */
+        if (*p == '\0' || *p == '\n') continue;
+
+        /* UTC_OFFSET directive (not a comment — must be first word) */
+        if (strncmp(p, "UTC_OFFSET", 10) == 0) {
+            double hours = 0.0;
+            if (sscanf(p + 10, "%lf", &hours) == 1)
+                *file_tz_offset = (long)(hours * 3600.0);
+            continue;
+        }
+
+        /* skip comment lines */
+        if (*p == '#') continue;
 
         Route r;
         if (sscanf(p, "%d %63s %d %d",
                    &r.route_num, r.stop_name,
                    &r.freq_mins, &r.offset_secs) == 4) {
-            if (r.freq_mins < 1)  r.freq_mins  = 1;
+            if (r.freq_mins < 1)   r.freq_mins   = 1;
             if (r.offset_secs < 0) r.offset_secs = 0;
             routes[count++] = r;
         }
@@ -307,42 +327,43 @@ int main(int argc, char *argv[])
     const char *filename = (argc > 1) ? argv[1] : "routes.txt";
 
     /*
-     * Determine display timezone offset.
+     * Determine display timezone offset — three-level priority:
      *
-     * Priority:
-     *  1. Second command-line argument: e.g.  -4   or  +5.5
-     *  2. TZ environment variable via system detect (e.g. TZ=America/Toronto)
-     *  3. Server system timezone (often UTC on cloud hosts)
+     *  1. Command-line argument  (highest):  ./departures routes.txt -4
+     *  2. UTC_OFFSET directive in routes file:  UTC_OFFSET -4
+     *  3. System / TZ env-var detection  (lowest):  TZ=America/Toronto ./departures
      *
-     * If the displayed clock is wrong, rerun with your UTC offset:
-     *   ./departures routes.txt -4     (for EDT)
-     *   ./departures routes.txt -5     (for EST)
+     * The routes file directive (option 2) is the recommended approach —
+     * set it once in routes.txt and every run is correct automatically.
      */
-    if (argc > 2) {
-        /* manual override — convert fractional hours to seconds */
-        double hours = atof(argv[2]);
-        g_tz_offset  = (long)(hours * 3600.0);
-        printf("Using manual UTC offset: %+.1f h (%ld s)\n", hours, g_tz_offset);
-    } else {
-        g_tz_offset = detect_tz_offset();
-        printf("Detected timezone offset: %+ld h (UTC%+ld:%02ld)\n",
-               g_tz_offset / 3600,
-               g_tz_offset / 3600,
-               labs(g_tz_offset % 3600) / 60);
-        if (g_tz_offset == 0) {
-            printf("  Tip: if the clock looks wrong, pass your UTC offset:\n");
-            printf("       ./departures routes.txt -4    (EDT)\n");
-            printf("       ./departures routes.txt -5    (EST)\n");
-        }
-    }
 
-    /* load routes */
-    Route routes[MAX_ROUTES];
-    int   nroutes = load_routes(filename, routes, MAX_ROUTES);
+    /* load routes (also reads UTC_OFFSET from file if present) */
+    long   file_tz   = LONG_MIN;   /* sentinel: "not set" */
+    Route  routes[MAX_ROUTES];
+    int    nroutes   = load_routes(filename, routes, MAX_ROUTES, &file_tz);
     if (nroutes <= 0) {
         fprintf(stderr, "No routes loaded.  Exiting.\n");
         return 1;
     }
+
+    if (argc > 2) {
+        /* 1 — explicit command-line override */
+        double hours = atof(argv[2]);
+        g_tz_offset  = (long)(hours * 3600.0);
+        printf("UTC offset (from argument): %+.1f h\n", hours);
+    } else if (file_tz != LONG_MIN) {
+        /* 2 — UTC_OFFSET directive found inside the routes file */
+        g_tz_offset = file_tz;
+        printf("UTC offset (from routes file): %+d h\n", (int)(g_tz_offset / 3600));
+    } else {
+        /* 3 — fall back to system / TZ env-var detection */
+        g_tz_offset = detect_tz_offset();
+        printf("UTC offset (system detected): %+d h\n", (int)(g_tz_offset / 3600));
+        if (g_tz_offset == 0) {
+            printf("  Tip: add  UTC_OFFSET -4  to routes.txt to set your timezone.\n");
+        }
+    }
+
     printf("Loaded %d route(s) from '%s'.\n", nroutes, filename);
 
     /* set up signal handler so Ctrl+C restores the cursor */

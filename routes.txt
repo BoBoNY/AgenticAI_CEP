@@ -1,5 +1,10 @@
 # Transit Terminal Departures Board - Routes Configuration
-# Format: ROUTE_NUMBER  STOP_NAME  FREQUENCY_MINS  OFFSET_SECS
+#
+# UTC_OFFSET: your local UTC offset in hours (e.g. -4 for EDT, -5 for EST)
+# Change this to match your timezone.
+UTC_OFFSET -4
+#
+# Route lines format: ROUTE_NUMBER  STOP_NAME  FREQUENCY_MINS  OFFSET_SECS
 # FREQUENCY_MINS : how often this route departs (headway)
 # OFFSET_SECS    : stagger offset so routes don't all depart at once
 501  Queen             10   0
