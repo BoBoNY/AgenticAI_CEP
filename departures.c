@@ -5,7 +5,14 @@
  * board showing upcoming departures with real-time countdowns.
  *
  * Compile:  gcc -Wall -std=c99 -o departures departures.c
- * Run:      ./departures [routes_file]   (default: routes.txt)
+ * Run:      ./departures [routes_file] [utc_offset_hours]
+ *
+ *   routes_file      : path to routes data file  (default: routes.txt)
+ *   utc_offset_hours : e.g. -4 for EDT, -5 for EST, +1 for CET
+ *                      If omitted the program detects the system timezone.
+ *
+ * You can also set the TZ variable before running instead:
+ *   TZ=America/Toronto ./departures
  *
  * Compatible with Linux and Seneca Matrix (gcc).
  */
@@ -58,7 +65,38 @@ typedef struct {
 } Departure;
 
 /* ── Globals ─────────────────────────────────────────────────  */
-static volatile int running = 1;
+static volatile int running     = 1;
+static long         g_tz_offset = 0;   /* display offset in seconds (e.g. -14400 for EDT) */
+
+/* ── Timezone helpers ───────────────────────────────────────── */
+
+/*
+ * Detect the local UTC offset in seconds by comparing how mktime()
+ * interprets a UTC broken-down time vs the original epoch value.
+ * Respects the TZ environment variable (e.g. TZ=America/Toronto).
+ *
+ * Example: UTC-4 (EDT) returns -14400.
+ */
+static long detect_tz_offset(void)
+{
+    time_t    t  = time(NULL);
+    struct tm gm = *gmtime(&t);
+    /* mktime treats 'gm' as *local* time and converts to epoch.
+       Subtracting from t gives the local UTC offset. */
+    return (long)t - (long)mktime(&gm);
+}
+
+/*
+ * Break down a Unix timestamp adjusted by g_tz_offset for display.
+ * Uses gmtime() so we are not affected by the server's system timezone.
+ * Writes the result into *out and returns out.
+ */
+static struct tm *display_tm(time_t t, struct tm *out)
+{
+    time_t adjusted = t + (time_t)g_tz_offset;
+    *out = *gmtime(&adjusted);
+    return out;
+}
 
 /* ── Signal handler ─────────────────────────────────────────── */
 static void handle_sigint(int sig)
@@ -171,19 +209,20 @@ static void print_countdown(long secs)
 
 /* ── Board renderer ──────────────────────────────────────────── */
 static void draw_board(const Departure *deps, int ndeps, long now,
-                       int nroutes, const char *filename)
+                       int nroutes)
 {
+    struct tm tbuf;   /* reusable buffer for display_tm() */
+
     /* ── title bar ── */
     printf(CLEAR_SCREEN);
     printf("%s%s%s", BG_HEADER, BOLD, FG_WHITE);
     printf("  %-30s", "TRANSIT TERMINAL DEPARTURES");
 
-    /* live clock */
-    time_t t_now = (time_t)now;
-    struct tm *tm_now = localtime(&t_now);
+    /* live clock — uses display timezone */
+    display_tm((time_t)now, &tbuf);
     printf("  %s  %02d:%02d:%02d  %s\n",
            FG_YELLOW,
-           tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec,
+           tbuf.tm_hour, tbuf.tm_min, tbuf.tm_sec,
            RESET);
 
     /* ── column headers ── */
@@ -225,12 +264,11 @@ static void draw_board(const Departure *deps, int ndeps, long now,
         /* countdown */
         print_countdown(secs_away);
 
-        /* scheduled departure time */
-        time_t dep_t = (time_t)deps[i].depart_at;
-        struct tm *dep_tm = localtime(&dep_t);
+        /* scheduled departure time — adjusted for display timezone */
+        display_tm((time_t)deps[i].depart_at, &tbuf);
         printf("  %s%02d:%02d%s",
                FG_GRAY,
-               dep_tm->tm_hour, dep_tm->tm_min,
+               tbuf.tm_hour, tbuf.tm_min,
                RESET);
 
         printf("%s\n", RESET);
@@ -250,9 +288,15 @@ static void draw_board(const Departure *deps, int ndeps, long now,
     for (int i = 0; i < 70; i++) putchar('-');
     printf("%s\n", RESET);
 
-    printf("%s  Loaded %d routes from '%s'  |  Next %d departures shown  |  "
-           "Press Ctrl+C to exit%s\n",
-           FG_GRAY, nroutes, filename, SHOW_ROWS, RESET);
+    /* show UTC offset so the user can confirm the right timezone */
+    int  off_h = (int)(g_tz_offset / 3600);
+    int  off_m = (int)((g_tz_offset % 3600) / 60);
+    if (off_m < 0) off_m = -off_m;
+    char tz_label[32];
+    snprintf(tz_label, sizeof(tz_label), "UTC%+d:%02d", off_h, off_m);
+
+    printf("%s  %d routes  |  %s  |  Next %d deps  |  Ctrl+C to exit%s\n",
+           FG_GRAY, nroutes, tz_label, SHOW_ROWS, RESET);
 
     fflush(stdout);
 }
@@ -261,6 +305,36 @@ static void draw_board(const Departure *deps, int ndeps, long now,
 int main(int argc, char *argv[])
 {
     const char *filename = (argc > 1) ? argv[1] : "routes.txt";
+
+    /*
+     * Determine display timezone offset.
+     *
+     * Priority:
+     *  1. Second command-line argument: e.g.  -4   or  +5.5
+     *  2. TZ environment variable via system detect (e.g. TZ=America/Toronto)
+     *  3. Server system timezone (often UTC on cloud hosts)
+     *
+     * If the displayed clock is wrong, rerun with your UTC offset:
+     *   ./departures routes.txt -4     (for EDT)
+     *   ./departures routes.txt -5     (for EST)
+     */
+    if (argc > 2) {
+        /* manual override — convert fractional hours to seconds */
+        double hours = atof(argv[2]);
+        g_tz_offset  = (long)(hours * 3600.0);
+        printf("Using manual UTC offset: %+.1f h (%ld s)\n", hours, g_tz_offset);
+    } else {
+        g_tz_offset = detect_tz_offset();
+        printf("Detected timezone offset: %+ld h (UTC%+ld:%02ld)\n",
+               g_tz_offset / 3600,
+               g_tz_offset / 3600,
+               labs(g_tz_offset % 3600) / 60);
+        if (g_tz_offset == 0) {
+            printf("  Tip: if the clock looks wrong, pass your UTC offset:\n");
+            printf("       ./departures routes.txt -4    (EDT)\n");
+            printf("       ./departures routes.txt -5    (EST)\n");
+        }
+    }
 
     /* load routes */
     Route routes[MAX_ROUTES];
@@ -286,7 +360,7 @@ int main(int argc, char *argv[])
         int ndeps = build_departures(routes, nroutes, deps, MAX_DEPARTURES, now);
         qsort(deps, (size_t)ndeps, sizeof(Departure), cmp_departure);
 
-        draw_board(deps, ndeps, now, nroutes, filename);
+        draw_board(deps, ndeps, now, nroutes);
 
         sleep(REFRESH_SECS);
     }
