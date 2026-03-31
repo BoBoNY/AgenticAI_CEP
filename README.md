@@ -18,3 +18,4 @@ The program reads route and stop information from a text file and displays a rea
 Using `make`:
 ```bash
 make
+./departures
